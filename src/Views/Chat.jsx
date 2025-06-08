@@ -203,7 +203,7 @@ import { Button, Grid, Icon, Tooltip, CircularProgress } from '@mui/material';
 import { Box, TextField, InputAdornment, IconButton, Typography, styled, LinearProgress } from '@mui/material';
 import Navbar from '../Components/Navbar';
 import SendIcon from '@mui/icons-material/Send';
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react'; // Import useEffect
 import axios from 'axios';
 import { motion } from 'framer-motion';
 import PersonIcon from '@mui/icons-material/Person';
@@ -240,33 +240,67 @@ const VisuallyHiddenInput = styled('input')({
 
 const Chat = () => {
     const fileInputRef = useRef(null);
-    const [alert, Setalert] = useState(false); // Renamed from alter to alert for consistency
+    const [alert, Setalert] = useState(false);
     const [chatHistory, SetChatHistory] = useState([]);
     const [storeUserInput, SetStoreUserInput] = useState('');
+    console.log("Stored User Input", storeUserInput)
     const [storeUserFile, SetStoreUserFile] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [ollamaResponseData, setOllamaResponseData] = useState(null); // To store the full response from Ollama
-    const [highlightedPdfUrl, setHighlightedPdfUrl] = useState(null); // To store the PDF URL
+    const [ollamaResponseData, setOllamaResponseData] = useState(null);
+    const [highlightedPdfUrl, setHighlightedPdfUrl] = useState(null);
+    const [showPdf, setShowPdf] = useState(false);
+    const [previewPdfUrl, setPreviewPdfUrl] = useState(null); // New state for PDF preview URL
 
-    // console.log("Current Ollama Response Data:", ollamaResponseData);
-    // console.log("Highlighted PDF URL:", highlightedPdfUrl);
+    // Clean up the object URL when the component unmounts or the file changes
+    useEffect(() => {
+        return () => {
+            if (previewPdfUrl) {
+                URL.revokeObjectURL(previewPdfUrl);
+            }
+        };
+    }, [previewPdfUrl]);
+
 
     const handleuserInput = (data) => {
         SetStoreUserInput(data);
     };
 
-    const handleFileUploadButtonClick = (event) => {
-        const file = event.target.files[0];
+    const handleFileChange = (file) => {
         SetStoreUserFile(file);
+        if (file && file.type === 'application/pdf') {
+            setShowPdf(true);
+            // Create object URL only when a new PDF is selected
+            if (previewPdfUrl) { // Revoke previous URL if exists
+                URL.revokeObjectURL(previewPdfUrl);
+            }
+            setPreviewPdfUrl(URL.createObjectURL(file));
+        } else {
+            setShowPdf(false);
+            if (previewPdfUrl) {
+                URL.revokeObjectURL(previewPdfUrl);
+                setPreviewPdfUrl(null);
+            }
+        }
+    };
+
+    const handleFileUploadButtonClick = (event) => {
+        event.preventDefault();
+        const file = event.target.files[0];
+        handleFileChange(file);
     };
 
     const handleDragAndDropFile = (file) => {
-        SetStoreUserFile(file);
+        handleFileChange(file);
     };
 
     const clearInputs = () => {
         SetStoreUserInput('');
         SetStoreUserFile(null);
+        setShowPdf(false);
+        if (previewPdfUrl) {
+            URL.revokeObjectURL(previewPdfUrl);
+            setPreviewPdfUrl(null);
+        }
         if (fileInputRef.current) {
             fileInputRef.current.value = null;
         }
@@ -283,31 +317,27 @@ const Chat = () => {
             if (storeUserFile) {
                 formData.append('file', storeUserFile);
             }
-            clearInputs();
+            clearInputs(); // Clear inputs after appending to formData
 
             const response = await axios.post('http://127.0.0.1:5000/upload', formData); // Use your Ollama endpoint
 
             console.log("Full Server Response:", response.data);
 
-            // Expecting response.data to be: { "highlighted_pdf_url": "...", "result": { ... } }
-            // Ensure the result key is parsed if it's a string, as your backend might still send it as a string
             let parsedResult = response.data.result;
             if (typeof parsedResult === 'string') {
                 try {
                     parsedResult = JSON.parse(parsedResult);
                 } catch (e) {
                     console.error("Failed to parse 'result' string into JSON:", e);
-                    // Handle this error appropriately, perhaps display raw string
                 }
             }
 
-            setOllamaResponseData(parsedResult); // Store the parsed JSON result
-            setHighlightedPdfUrl(`http://127.0.0.1:5000${response.data.highlighted_pdf_url}`); // Store the full PDF URL
+            setOllamaResponseData(parsedResult);
+            setHighlightedPdfUrl(`http://127.0.0.1:5000${response.data.highlighted_pdf_url}`);
 
-            // Optionally, add to chat history if you still want a linear display
             const newEntry = {
                 userInput: storeUserInput,
-                userFile: storeUserFile ? storeUserFile.name : null, // Store filename
+                userFile: storeUserFile ? storeUserFile.name : null,
                 responseData: parsedResult,
                 pdfUrl: `http://127.0.0.1:5000${response.data.highlighted_pdf_url}`
             };
@@ -315,9 +345,8 @@ const Chat = () => {
 
         } catch (error) {
             console.error("Error in handleSubmit:", error);
-            // Consider more user-friendly error messages
-            Setalert(true); // Show an alert for errors
-            setTimeout(() => Setalert(false), 5000); // Hide alert after 5 seconds
+            Setalert(true);
+            setTimeout(() => Setalert(false), 5000);
         } finally {
             setIsLoading(false);
         }
@@ -350,9 +379,9 @@ const Chat = () => {
                             name='file'
                             handleChange={handleDragAndDropFile}
                             types={fileTypes}
-                            disabled={isLoading || (storeUserFile && fileInputRef.current && fileInputRef.current.files.length > 0)}
+                            disabled={isLoading || storeUserFile} // Disable if a file is already selected or loading
                         />
-                        {storeUserFile && !fileInputRef.current?.files[0] && (
+                        {storeUserFile && (
                             <Typography variant='body2' sx={{ color: 'green', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', mt: 1 }}>
                                 {storeUserFile.name}
                             </Typography>
@@ -407,14 +436,6 @@ const Chat = () => {
                                                 </Tooltip>
                                             )
                                         }
-                                        {
-                                            storeUserFile && fileInputRef.current?.files[0] &&
-                                            (
-                                                <Typography variant='body2' sx={{ color: 'green', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                    {storeUserFile.name}
-                                                </Typography>
-                                            )
-                                        }
                                         <Tooltip title="Send" placement='top'>
                                             <IconButton disabled={!storeUserInput || isLoading} edge='end' onClick={handleSubmit}>
                                                 {isLoading ? <CircularProgress size={24} /> : <SendIcon />}
@@ -427,6 +448,29 @@ const Chat = () => {
                     </Box>
                 </Grid>
 
+                {/* JSx for Showing the PDF file for the user Preview */}
+                {showPdf && previewPdfUrl && ( // Use previewPdfUrl here
+                    <Grid item xs={12} sx={{ mt: 4, display: 'flex', justifyContent: 'center' }}>
+                        <Box sx={{
+                            width: '80%',
+                            height: '600px',
+                            border: '1px solid #ccc',
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            boxShadow: 2,
+                            backgroundColor: 'white',
+                        }}>
+                            <iframe
+                                src={`${previewPdfUrl}#zoom=150`} // Use previewPdfUrl
+                                width="100%"
+                                height="100%"
+                                title="PDF Preview"
+                                style={{ border: 'none' }}
+                            />
+                        </Box>
+                    </Grid>
+                )}
+
                 {/* Displaying the Ollama model response (extracted JSON) and PDF link */}
                 {ollamaResponseData && (
                     <Grid item xs={12} sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
@@ -435,7 +479,7 @@ const Chat = () => {
                                 Extracted Data:
                             </Typography>
                             {Object.keys(ollamaResponseData).length > 0 ? (
-                                <Box sx={{ maxHeight: 280, overflowY: 'auto' }}> {/* Add scrolling here */}
+                                <Box sx={{ maxHeight: 280, overflowY: 'auto' }}>
                                     <Table>
                                         <TableHead>
                                             <TableRow>
@@ -474,29 +518,30 @@ const Chat = () => {
                     </Grid>
                 )}
 
+
                 {/* Loader in the center of the screen */}
-                {/* {isLoading && ( */}
-                <Box sx={{
-                    position: 'fixed', // Use 'fixed' to center it on the screen
-                    top: '60%',
-                    left: '50%',
-                    transform: 'translate(-50%, -50%)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 2,
-                    bgcolor: 'rgba(255, 255, 255, 0.9)', // Slightly more opaque background
-                    p: 4,
-                    borderRadius: 2,
-                    boxShadow: 3,
-                    zIndex: 1300, // Ensure it's above other content
-                }}>
-                    <CircularProgress size={60} />
-                    <Typography variant="h6" color="text.secondary">
-                        Generating Response......!
-                    </Typography>
-                </Box>
-                {/* )} */}
+                {isLoading && (
+                    <Box sx={{
+                        position: 'fixed',
+                        top: '60%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 2,
+                        bgcolor: 'rgba(255, 255, 255, 0.9)',
+                        p: 4,
+                        borderRadius: 2,
+                        boxShadow: 3,
+                        zIndex: 1300,
+                    }}>
+                        <CircularProgress size={60} />
+                        <Typography variant="h6" color="text.secondary">
+                            Generating Response......!
+                        </Typography>
+                    </Box>
+                )}
 
                 {/* Alert for errors */}
                 {alert && (
@@ -507,7 +552,7 @@ const Chat = () => {
                             bottom: 20,
                             left: '50%',
                             transform: 'translateX(-50%)',
-                            zIndex: 1400, // Above loader
+                            zIndex: 1400,
                         }}
                     >
                         An error occurred while processing your request. Please try again.
